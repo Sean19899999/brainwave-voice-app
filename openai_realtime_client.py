@@ -3,6 +3,7 @@ import json
 import base64
 import logging
 import time
+import os
 from typing import Optional, Callable, Dict, List
 import asyncio
 
@@ -10,12 +11,25 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 class OpenAIRealtimeAudioTextClient:
-    def __init__(self, api_key: str, model: str = "gpt-4o-realtime-preview"):
+    def __init__(self, api_key: str, model: str = "gpt-4o-realtime-preview", base_url: Optional[str] = None):
         self.api_key = api_key
         self.model = model
         self.ws = None
         self.session_id = None
-        self.base_url = "wss://api.openai.com/v1/realtime"
+        
+        # 支持自定义 base URL
+        if base_url:
+            # 将 HTTP URL 转换为 WebSocket URL
+            if base_url.startswith("https://"):
+                ws_base = base_url.replace("https://", "wss://")
+            elif base_url.startswith("http://"):
+                ws_base = base_url.replace("http://", "ws://")
+            else:
+                ws_base = base_url
+            self.base_url = f"{ws_base}/v1/realtime"
+        else:
+            self.base_url = "wss://api.openai.com/v1/realtime"
+            
         self.last_audio_time = None 
         self.auto_commit_interval = 5
         self.receive_task = None

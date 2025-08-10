@@ -2,13 +2,13 @@ import asyncio
 import json
 import os
 import numpy as np
-from fastapi import FastAPI, WebSocket, Request, HTTPException
+from dotenv import load_dotenv
+from fastapi import FastAPI, WebSocket, Request, HTTPException, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 import uvicorn
 import logging
 from prompts import PROMPTS
-from openai_realtime_client import OpenAIRealtimeAudioTextClient
 from starlette.websockets import WebSocketState
 import wave
 import datetime
@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from typing import Generator
 from llm_processor import get_llm_processor
 from datetime import datetime, timedelta
+import tempfile
+import io
 
 # Configure logging
 logging.basicConfig(
@@ -47,7 +49,11 @@ class AskAIResponse(BaseModel):
 
 app = FastAPI()
 
+# Load environment variables from .env file
+load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 if not OPENAI_API_KEY:
     logger.error("OPENAI_API_KEY is not set in environment variables.")
     raise EnvironmentError("OPENAI_API_KEY is not set.")
@@ -122,7 +128,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Clear the ready flag while initializing
             openai_ready.clear()
             
-            client = OpenAIRealtimeAudioTextClient(os.getenv("OPENAI_API_KEY"))
+            client = OpenAIRealtimeAudioTextClient(os.getenv("OPENAI_API_KEY"), base_url=OPENAI_BASE_URL)
             await client.connect()
             logger.info("Successfully connected to OpenAI client")
             
@@ -433,6 +439,52 @@ async def check_correctness(request: CorrectnessRequest):
     except Exception as e:
         logger.error(f"Error checking correctness: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error processing correctness check.")
+
+@app.post(
+    "/api/v1/transcribe",
+    summary="Transcribe Audio",
+    description="Upload audio file and get transcription using Whisper API."
+)
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """Upload audio and get transcription"""
+    try:
+        # 验证文件类型
+        if not audio.content_type.startswith('audio/'):
+            raise HTTPException(status_code=400, detail="File must be an audio file")
+        
+        # 读取音频数据
+        audio_data = await audio.read()
+        
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            tmp_file.write(audio_data)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # 使用 OpenAI Whisper API 进行转录
+            base_url = os.getenv("OPENAI_BASE_URL")
+            client = OpenAI(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                base_url=base_url if base_url else None
+            )
+            
+            with open(tmp_file_path, "rb") as audio_file:
+                transcription = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="text"
+                )
+            
+            logger.info(f"Transcription completed: {transcription[:100]}...")
+            return {"transcription": transcription}
+            
+        finally:
+            # 清理临时文件
+            os.unlink(tmp_file_path)
+            
+    except Exception as e:
+        logger.error(f"Transcription error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 if __name__ == '__main__':
     uvicorn.run(app, host="0.0.0.0", port=3005)

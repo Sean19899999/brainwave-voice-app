@@ -52,8 +52,17 @@ class GPTProcessor(LLMProcessor):
     def __init__(self):
         if not os.getenv("OPENAI_API_KEY"):
             raise ValueError("OpenAI API key not found in environment variables")
-        self.async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # 支持自定义 base URL
+        base_url = os.getenv("OPENAI_BASE_URL")
+        self.async_client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=base_url if base_url else None
+        )
+        self.sync_client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=base_url if base_url else None
+        )
         self.default_model = "gpt-4"
 
     async def process_text(self, text: str, prompt: str, model: Optional[str] = None) -> AsyncGenerator[str, None]:
